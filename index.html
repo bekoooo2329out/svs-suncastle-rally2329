@@ -33,6 +33,25 @@ hr{border:0;border-top:1px solid #29364d;margin:14px 0}
 <div class="wrap">
 <h1>🏰 SVS 王城ラリー管制盤</h1>
 <div class="sub">集結5分 → 行軍 → 着弾。複数ラリーを到着順で自動管理</div>
+<div class="card" id="authCard">
+  <strong>アクセス認証</strong>
+  <div style="margin-top:10px">
+    <label>共通パスワード</label>
+    <input id="appPassword" type="password" placeholder="共通パスワード">
+  </div>
+  <button class="primary" id="loginBtn" style="margin-top:10px">入室</button>
+  <div id="authMsg" class="status"></div>
+  <hr>
+  <strong>管理者認証</strong>
+  <div style="margin-top:10px">
+    <label>管理者パスワード</label>
+    <input id="adminPassword" type="password" placeholder="管理者パスワード">
+  </div>
+  <button id="adminLoginBtn" style="margin-top:10px">編集権限を取得</button>
+  <div id="adminMsg" class="status"></div>
+</div>
+
+<div id="appContent" style="display:none">
 
 <div class="card">
 <div class="grid">
@@ -70,64 +89,370 @@ hr{border:0;border-top:1px solid #29364d;margin:14px 0}
 <div id="rallies"></div>
 </div>
 
+</div>
 <div class="footer">データはこのブラウザに保存されます。共有同期は次の段階で追加できます。</div>
 </div>
 
 <script>
-const KEY="svs_oujou_rally_v2";
-let state=JSON.parse(localStorage.getItem(KEY)||'{"presets":[],"rallies":[]}');
-const $=id=>document.getElementById(id);
-function save(){localStorage.setItem(KEY,JSON.stringify(state))}
-function esc(s){return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
-function fmt(sec){sec=Math.max(0,Math.ceil(sec));return String(Math.floor(sec/60)).padStart(2,'0')+":"+String(sec%60).padStart(2,'0')}
-function renderPresets(){
- const sel=$("preset"), old=sel.value;
- sel.innerHTML='<option value="">手入力</option>'+state.presets.map((p,i)=>`<option value="${i}">${esc(p.name)} / ${p.country==="jp"?"🇯🇵":"🇺🇸"} / ${p.march}秒</option>`).join('');
- if([...sel.options].some(o=>o.value===old))sel.value=old;
- $("presetList").innerHTML=state.presets.length?state.presets.map((p,i)=>`<div class="preset-item"><span>${esc(p.name)}　${p.country==="jp"?"🇯🇵":"🇺🇸"}　${p.march}秒</span><button class="danger" onclick="delPreset(${i})">削除</button></div>`).join(''):'<div class="empty">まだプリセットはありません</div>';
+const SUPABASE_URL = "https://cuozezternskskozwpsf.supabase.co";
+const SUPABASE_KEY = "sb_publishable_b20lWTuJqUTPcIAVbuv9_w_DCZt8Hmv";
+const FUNCTION_URL = SUPABASE_URL + "/functions/v1/hello-world";
+
+let viewerToken = "";
+let adminToken = "";
+let state = { presets: [], rallies: [] };
+let syncing = false;
+
+const $ = id => document.getElementById(id);
+
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, m =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])
+  );
 }
-$("preset").addEventListener("change",()=>{const p=state.presets[+$("preset").value];if(!p)return;$("leader").value=p.name;$("march").value=p.march;$("country").value=p.country});
-$("savePreset").addEventListener("click",()=>{
- const name=$("newName").value.trim(), march=Number($("newMarch").value), country=$("newCountry").value;
- if(!name||!Number.isFinite(march)||march<0){$("presetMsg").textContent="集結主名と行軍秒数を入力してください";$("presetMsg").className="status err";return}
- state.presets.push({name,country,march});save();renderPresets();$("newName").value="";$("newMarch").value="";
- $("presetMsg").textContent="保存しました";$("presetMsg").className="status ok";setTimeout(()=>$("presetMsg").className="status",1500);
-});
-function delPreset(i){if(confirm("このプリセットを削除しますか？")){state.presets.splice(i,1);save();renderPresets()}}
-$("startBtn").addEventListener("click",()=>{
- const leader=$("leader").value.trim(), march=Number($("march").value), country=$("country").value;
- if(!leader||!Number.isFinite(march)||march<0){$("msg").textContent="集結主名と行軍秒数を入力してください";$("msg").className="status err";return}
- state.rallies.push({id:Date.now()+"_"+Math.random(),leader,march,country,start:Date.now(),adjust:0,done:false});save();
- $("msg").textContent="ラリーを開始しました";$("msg").className="status ok";$("leader").value="";$("march").value="";$("preset").value="";
-});
-function adjust(id,n){const r=state.rallies.find(x=>x.id===id);if(r){r.adjust+=n;save()}}
-function cancelRally(id){state.rallies=state.rallies.filter(x=>x.id!==id);save()}
-$("clearDone").addEventListener("click",()=>{state.rallies=state.rallies.filter(r=>!r.done);save()});
-function render(){
- const now=Date.now();
- state.rallies=state.rallies.filter(r=>{
-   const impact=r.start+300000+r.march*1000+r.adjust*1000;
-   return now < impact+1000;
- });
- state.rallies.forEach(r=>{const impact=r.start+300000+r.march*1000+r.adjust*1000;if(now>=impact)r.done=true});
- state.rallies.sort((a,b)=>(a.start+300000+a.march*1000+a.adjust*1000)-(b.start+300000+b.march*1000+b.adjust*1000));
- save();
- $("count").textContent=state.rallies.length+"件";
- const active=state.rallies.filter(r=>!r.done);
- const last=active[active.length-1];
- $("last").innerHTML=last?`現在の最後尾：${last.country==="jp"?"🇯🇵":"🇺🇸"} ${esc(last.leader)} <strong>${fmt((last.start+300000+last.march*1000+last.adjust*1000-now)/1000)}</strong>`:"現在の最後尾：—";
- $("rallies").innerHTML=state.rallies.length?state.rallies.map(r=>{
-  const gatherEnd=r.start+300000+r.adjust*1000, impact=gatherEnd+r.march*1000, remain=(impact-now)/1000, gatherRemain=(gatherEnd-now)/1000;
-  const phase=remain<=0?"完了":gatherRemain>0?"集結中":"行軍中";
-  return `<div class="rally ${r.country}">
-  <div class="head"><div class="name">${r.country==="jp"?"🇯🇵":"🇺🇸"} ${esc(r.leader)} <span class="badge">${phase}</span></div><button class="danger" onclick="cancelRally('${r.id}')">取消</button></div>
-  <div class="timer">${remain<=0?"00:00":fmt(remain)}</div>
-  <div class="phase">${phase==="集結中"?"集結終了まで "+fmt(gatherRemain):phase==="行軍中"?"着弾まで "+fmt(remain):"着弾済み"}</div>
-  <div class="impact">着弾予定：${new Date(impact).toLocaleTimeString("ja-JP",{hour:"2-digit",minute:"2-digit",second:"2-digit"})}</div>
-  <div class="row" style="margin-top:8px"><button onclick="adjust('${r.id}',-15)">−15秒</button><button onclick="adjust('${r.id}',-10)">−10秒</button><button onclick="adjust('${r.id}',-5)">−5秒</button><button onclick="adjust('${r.id}',5)">＋5秒</button><button onclick="adjust('${r.id}',10)">＋10秒</button><button onclick="adjust('${r.id}',15)">＋15秒</button></div>
-  </div>`}).join(''):'<div class="empty">進行中のラリーはありません</div>';
+
+function fmt(sec) {
+  sec = Math.max(0, Math.ceil(sec));
+  return String(Math.floor(sec / 60)).padStart(2,'0') + ":" +
+    String(sec % 60).padStart(2,'0');
 }
-renderPresets();render();setInterval(render,250);
+
+async function apiRequest(action, payload = {}) {
+  const response = await fetch(FUNCTION_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "apikey": SUPABASE_KEY
+    },
+    body: JSON.stringify({ action, ...payload })
+  });
+
+const data = await response.json();
+
+  if (!response.ok) {
+    throw new Error(data.error || data.message || "通信に失敗しました");
+  }
+
+  return data;
+}
+
+function showAuthMessage(id, message, error = false) {
+  const el = $(id);
+  el.textContent = message;
+  el.className = "status " + (error ? "err" : "ok");
+}
+
+function setEditControls() {
+  const editable = !!adminToken;
+
+  ["country", "leader", "march", "newName", "newCountry", "newMarch",
+   "startBtn", "clearDone", "savePreset"].forEach(id => {
+    $(id).disabled = !editable;
+  });
+
+  renderPresets();
+  render();
+}
+
+async function loadSharedData() {
+  if (syncing) return;
+  syncing = true;
+
+  try {
+    const data = await apiRequest("list", { token: viewerToken });
+
+    state.rallies = (data.rallies || []).map(r => ({
+      id: String(r.id),
+      leader: r.leader,
+      march: Number(r.march_seconds),
+      country: r.country,
+      start: new Date(r.start_at).getTime(),
+      adjust: Number(r.adjust_seconds || 0),
+      done: false
+    }));
+
+    state.presets = (data.presets || []).map(p => ({
+      id: String(p.id),
+      name: p.name,
+      country: p.country,
+      march: Number(p.march_seconds)
+    }));
+
+    renderPresets();
+    render();
+  } finally {
+    syncing = false;
+  }
+}
+
+function renderPresets() {
+  const sel = $("preset");
+  const old = sel.value;
+
+  sel.innerHTML = '<option value="">手入力</option>' +
+    state.presets.map(p =>
+      `<option value="${esc(p.id)}">${esc(p.name)} / ${p.country==="jp"?"🇯🇵":"🇺🇸"} / ${p.march}秒</option>`
+    ).join("");
+
+if ([...sel.options].some(o => o.value === old)) sel.value = old;
+
+  $("presetList").innerHTML = state.presets.length
+    ? state.presets.map(p =>
+      `<div class="preset-item"><span>${esc(p.name)} ${p.country==="jp"?"🇯🇵":"🇺🇸"} ${p.march}秒</span>
+      <button class="danger" ${adminToken ? "" : "disabled"} onclick="delPreset('${esc(p.id)}')">削除</button></div>`
+    ).join("")
+    : '<div class="empty">まだプリセットはありません</div>';
+}
+
+$("preset").addEventListener("change", () => {
+  const p = state.presets.find(x => x.id === $("preset").value);
+  if (!p) return;
+  $("leader").value = p.name;
+  $("march").value = p.march;
+  $("country").value = p.country;
+});
+
+$("loginBtn").addEventListener("click", async () => {
+  const password = $("appPassword").value;
+
+  if (!password) {
+    showAuthMessage("authMsg", "共通パスワードを入力してください。", true);
+    return;
+  }
+
+  try {
+    const result = await apiRequest("login", { password });
+    viewerToken = result.token;
+
+    await loadSharedData();
+
+    $("appContent").style.display = "block";
+    $("appPassword").parentElement.style.display = "none";
+    $("loginBtn").style.display = "none";
+
+    showAuthMessage("authMsg", "入室しました。");
+  } catch (error) {
+    viewerToken = "";
+    showAuthMessage("authMsg", error.message, true);
+  }
+});
+
+$("adminLoginBtn").addEventListener("click", async () => {
+  if (!viewerToken) {
+
+showAuthMessage("adminMsg", "先に共通パスワードで入室してください。", true);
+    return;
+  }
+
+  const password = $("adminPassword").value;
+
+  if (!password) {
+    showAuthMessage("adminMsg", "管理者パスワードを入力してください。", true);
+    return;
+  }
+
+  try {
+    const result = await apiRequest("admin_login", {
+      token: viewerToken,
+      password
+    });
+
+    adminToken = result.token;
+    $("adminPassword").value = "";
+    showAuthMessage("adminMsg", "編集権限を取得しました。");
+    setEditControls();
+  } catch (error) {
+    adminToken = "";
+    showAuthMessage("adminMsg", error.message, true);
+  }
+});
+
+$("savePreset").addEventListener("click", async () => {
+  if (!adminToken) return;
+
+  const name = $("newName").value.trim();
+  const march = Number($("newMarch").value);
+  const country = $("newCountry").value;
+
+ if (!name || !Number.isInteger(march) || march < 0) {
+    showAuthMessage("presetMsg", "集結主名と行軍秒数を入力してください。", true);
+    return;
+  }
+
+  try {
+    await apiRequest("create_preset", {
+      token: adminToken,
+      data: { name, country, march_seconds: march }
+    });
+
+    $("newName").value = "";
+    $("newMarch").value = "";
+    await loadSharedData();
+    showAuthMessage("presetMsg", "保存しました。");
+  } catch (error) {
+    showAuthMessage("presetMsg", error.message, true);
+  }
+});
+
+async function delPreset(id) {
+  if (!adminToken || !confirm("このプリセットを削除しますか？")) return;
+
+  try {
+    await apiRequest("delete_preset", { token: adminToken, id });
+    await loadSharedData();
+  } catch (error) {
+    alert(error.message);
+  }
+}
+
+$("startBtn").addEventListener("click", async () => {
+  if (!adminToken) return;
+
+  const leader = $("leader").value.trim();
+  const march = Number($("march").value);
+  const country = $("country").value;
+
+if (!leader || !Number.isInteger(march) || march < 0) {
+    $("msg").textContent = "集結主名と行軍秒数を入力してください";
+    $("msg").className = "status err";
+    return;
+  }
+
+  try {
+    await apiRequest("create_rally", {
+      token: adminToken,
+      data: {
+        leader,
+        country,
+        march_seconds: march,
+        start_at: new Date().toISOString()
+      }
+    });
+
+    $("leader").value = "";
+    $("march").value = "";
+    $("preset").value = "";
+    await loadSharedData();
+
+    $("msg").textContent = "ラリーを開始しました";
+    $("msg").className = "status ok";
+  } catch (error) {
+    $("msg").textContent = error.message;
+    $("msg").className = "status err";
+  }
+});
+
+async function adjust(id, n) {
+  if (!adminToken) return;
+
+  const r = state.rallies.find(x => x.id === id);
+  if (!r) return;
+
+  try {
+    await apiRequest("adjust_rally", {
+      token: adminToken,
+      id,
+      adjust_seconds: r.adjust + n
+    });
+    await loadSharedData();
+  } catch (error) {
+    alert(error.message);
+  }
+}
+
+async function cancelRally(id) {
+  if (!adminToken || !confirm("このラリーを取り消しますか？")) return;
+
+  try {
+    await apiRequest("delete_rally", { token: adminToken, id });
+    await loadSharedData();
+  } catch (error) {
+    alert(error.message);
+  }
+}
+
+$("clearDone").addEventListener("click", async () => {
+  if (!adminToken) return;
+
+  const now = Date.now();
+  const ids = state.rallies
+    .filter(r => now >= r.start + 300000 + r.march * 1000 + r.adjust * 1000)
+    .map(r => r.id);
+
+  if (!ids.length) {
+    alert("完了済みのラリーはありません。");
+    return;
+  }
+
+  if (!confirm("完了済みのラリーを削除しますか？")) return;
+
+  try {
+    await apiRequest("delete_completed", { token: adminToken, ids });
+    await loadSharedData();
+  } catch (error) {
+    alert(error.message);
+  }
+});
+
+function render() {
+  const now = Date.now();
+
+state.rallies.sort((a, b) =>
+    (a.start + 300000 + a.march * 1000 + a.adjust * 1000) -
+    (b.start + 300000 + b.march * 1000 + b.adjust * 1000)
+  );
+
+  $("count").textContent = state.rallies.length + "件";
+
+  const active = state.rallies.filter(r =>
+    now < r.start + 300000 + r.march * 1000 + r.adjust * 1000
+  );
+
+  const last = active[active.length - 1];
+
+  $("last").innerHTML = last
+    ? `現在の最後尾：${last.country==="jp"?"🇯🇵":"🇺🇸"} ${esc(last.leader)}
+       <strong>${fmt((last.start+300000+last.march*1000+last.adjust*1000-now)/1000)}</strong>`
+    : "現在の最後尾：—";
+
+ $("rallies").innerHTML = state.rallies.length
+    ? state.rallies.map(r => {
+      const gatherEnd = r.start + 300000 + r.adjust * 1000;
+      const impact = gatherEnd + r.march * 1000;
+      const remain = (impact - now) / 1000;
+      const gatherRemain = (gatherEnd - now) / 1000;
+      const phase = remain <= 0 ? "完了" : gatherRemain > 0 ? "集結中" : "行軍中";
+
+return `<div class="rally ${r.country}">
+        <div class="head">
+          <div class="name">${r.country==="jp"?"🇯🇵":"🇺🇸"} ${esc(r.leader)}
+          <span class="badge">${phase}</span></div>
+          <button class="danger" ${adminToken ? "" : "disabled"} onclick="cancelRally('${esc(r.id)}')">取消</button>
+        </div>
+        <div class="timer">${remain<=0?"00:00":fmt(remain)}</div>
+        <div class="phase">${phase==="集結中"?"集結終了まで "+fmt(gatherRemain):phase==="行軍中"?"着弾まで "+fmt(remain):"着弾済み"}</div>
+        <div class="impact">着弾予定：${new Date(impact).toLocaleTimeString("ja-JP",{hour:"2-digit",minute:"2-digit",second:"2-digit"})}</div>
+        <div class="row" style="margin-top:8px">
+          <button ${adminToken ? "" : "disabled"} onclick="adjust('${esc(r.id)}',-15)">−15秒</button>
+          <button ${adminToken ? "" : "disabled"} onclick="adjust('${esc(r.id)}',-10)">−10秒</button>
+          <button ${adminToken ? "" : "disabled"} onclick="adjust('${esc(r.id)}',-5)">−5秒</button>
+          <button ${adminToken ? "" : "disabled"} onclick="adjust('${esc(r.id)}',5)">＋5秒</button>
+          <button ${adminToken ? "" : "disabled"} onclick="adjust('${esc(r.id)}',10)">＋10秒</button>
+          <button ${adminToken ? "" : "disabled"} onclick="adjust('${esc(r.id)}',15)">＋15秒</button>
+        </div>
+      </div>`;
+    }).join("")
+    : '<div class="empty">進行中のラリーはありません</div>';
+}
+
+setEditControls();
+setInterval(() => {
+  if (viewerToken && !syncing) {
+    loadSharedData().catch(error => console.error(error));
+  }
+}, 5000);
+
+setInterval(render, 250);
 </script>
 </body>
 </html>
