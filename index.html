@@ -1,1 +1,133 @@
 
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#101827">
+<title>SVS 王城ラリー管制盤</title>
+<style>
+*{box-sizing:border-box}body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans JP",sans-serif;background:#0f172a;color:#e5e7eb}
+button,input,select{font:inherit}button{cursor:pointer}.wrap{max-width:900px;margin:auto;padding:18px}
+h1{font-size:24px;margin:0 0 6px}.sub{color:#94a3b8;font-size:13px;margin-bottom:18px}
+.card{background:#182235;border:1px solid #2b3952;border-radius:14px;padding:15px;margin-bottom:14px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}@media(max-width:620px){.grid{grid-template-columns:1fr}}
+label{display:block;font-size:12px;color:#aebbd0;margin-bottom:5px}input,select{width:100%;background:#0f172a;border:1px solid #3a4964;color:#fff;border-radius:9px;padding:10px}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.row>*{flex:1}
+button{border:0;border-radius:9px;padding:10px 13px;background:#334155;color:#fff}.primary{background:#2563eb}.danger{background:#b91c1c}.ghost{background:#263247}
+.small{font-size:12px;color:#94a3b8}.status{padding:9px 11px;border-radius:9px;background:#0b1220;margin-top:10px;display:none}
+.status.ok{display:block;color:#86efac}.status.err{display:block;color:#fca5a5}
+.rally{border:1px solid #34445f;border-radius:12px;padding:13px;margin-top:10px;background:#111a2b}
+.rally.jp{border-left:5px solid #60a5fa}.rally.enemy{border-left:5px solid #f87171}
+.head{display:flex;justify-content:space-between;gap:8px;align-items:center}.name{font-weight:700}.country{font-size:12px}
+.phase{font-size:12px;color:#94a3b8;margin-top:6px}.timer{font-size:34px;font-weight:800;letter-spacing:1px;margin:4px 0}.impact{font-size:12px;color:#cbd5e1}
+.badge{display:inline-block;padding:3px 7px;border-radius:99px;background:#334155;font-size:11px;margin-left:5px}
+.last{font-size:17px;font-weight:700}.last strong{font-size:28px}
+.preset-item{display:flex;justify-content:space-between;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid #29364d}.preset-item:last-child{border-bottom:0}
+hr{border:0;border-top:1px solid #29364d;margin:14px 0}
+.empty{text-align:center;color:#64748b;padding:20px}
+.footer{font-size:11px;color:#64748b;text-align:center;padding:10px}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>🏰 SVS 王城ラリー管制盤</h1>
+<div class="sub">集結5分 → 行軍 → 着弾。複数ラリーを到着順で自動管理</div>
+
+<div class="card">
+<div class="grid">
+<div><label>所属国</label><select id="country"><option value="jp">🇯🇵 自国</option><option value="enemy">🇺🇸 敵国</option></select></div>
+<div><label>集結主プリセット</label><select id="preset"><option value="">手入力</option></select></div>
+<div><label>集結主名</label><input id="leader" type="text" autocomplete="off" placeholder="例：ONI太郎"></div>
+<div><label>行軍秒数</label><input id="march" type="number" min="0" step="1" inputmode="numeric" placeholder="例：42"></div>
+</div>
+<div class="row" style="margin-top:10px">
+<button class="primary" id="startBtn">▶ START（今すぐ）</button>
+<button id="clearDone">完了済みを削除</button>
+</div>
+<div id="msg" class="status"></div>
+</div>
+
+<div class="card">
+<div class="last" id="last">現在の最後尾：—</div>
+</div>
+
+<div class="card">
+<div class="row"><strong>集結主プリセット</strong><span class="small">日本語・英語どちらも登録可能</span></div>
+<hr>
+<div class="grid">
+<div><label>集結主名</label><input id="newName" type="text" placeholder="例：ONI太郎 / Alice"></div>
+<div><label>所属国</label><select id="newCountry"><option value="jp">🇯🇵 自国</option><option value="enemy">🇺🇸 敵国</option></select></div>
+<div><label>行軍秒数</label><input id="newMarch" type="number" min="0" step="1" inputmode="numeric" placeholder="例：42"></div>
+</div>
+<button class="primary" id="savePreset" style="margin-top:10px">＋ プリセットを保存</button>
+<div id="presetMsg" class="status"></div>
+<div id="presetList"></div>
+</div>
+
+<div class="card">
+<div class="row"><strong>進行中のラリー</strong><span class="small" id="count"></span></div>
+<div id="rallies"></div>
+</div>
+
+<div class="footer">データはこのブラウザに保存されます。共有同期は次の段階で追加できます。</div>
+</div>
+
+<script>
+const KEY="svs_oujou_rally_v2";
+let state=JSON.parse(localStorage.getItem(KEY)||'{"presets":[],"rallies":[]}');
+const $=id=>document.getElementById(id);
+function save(){localStorage.setItem(KEY,JSON.stringify(state))}
+function esc(s){return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
+function fmt(sec){sec=Math.max(0,Math.ceil(sec));return String(Math.floor(sec/60)).padStart(2,'0')+":"+String(sec%60).padStart(2,'0')}
+function renderPresets(){
+ const sel=$("preset"), old=sel.value;
+ sel.innerHTML='<option value="">手入力</option>'+state.presets.map((p,i)=>`<option value="${i}">${esc(p.name)} / ${p.country==="jp"?"🇯🇵":"🇺🇸"} / ${p.march}秒</option>`).join('');
+ if([...sel.options].some(o=>o.value===old))sel.value=old;
+ $("presetList").innerHTML=state.presets.length?state.presets.map((p,i)=>`<div class="preset-item"><span>${esc(p.name)}　${p.country==="jp"?"🇯🇵":"🇺🇸"}　${p.march}秒</span><button class="danger" onclick="delPreset(${i})">削除</button></div>`).join(''):'<div class="empty">まだプリセットはありません</div>';
+}
+$("preset").addEventListener("change",()=>{const p=state.presets[+$("preset").value];if(!p)return;$("leader").value=p.name;$("march").value=p.march;$("country").value=p.country});
+$("savePreset").addEventListener("click",()=>{
+ const name=$("newName").value.trim(), march=Number($("newMarch").value), country=$("newCountry").value;
+ if(!name||!Number.isFinite(march)||march<0){$("presetMsg").textContent="集結主名と行軍秒数を入力してください";$("presetMsg").className="status err";return}
+ state.presets.push({name,country,march});save();renderPresets();$("newName").value="";$("newMarch").value="";
+ $("presetMsg").textContent="保存しました";$("presetMsg").className="status ok";setTimeout(()=>$("presetMsg").className="status",1500);
+});
+function delPreset(i){if(confirm("このプリセットを削除しますか？")){state.presets.splice(i,1);save();renderPresets()}}
+$("startBtn").addEventListener("click",()=>{
+ const leader=$("leader").value.trim(), march=Number($("march").value), country=$("country").value;
+ if(!leader||!Number.isFinite(march)||march<0){$("msg").textContent="集結主名と行軍秒数を入力してください";$("msg").className="status err";return}
+ state.rallies.push({id:Date.now()+"_"+Math.random(),leader,march,country,start:Date.now(),adjust:0,done:false});save();
+ $("msg").textContent="ラリーを開始しました";$("msg").className="status ok";$("leader").value="";$("march").value="";$("preset").value="";
+});
+function adjust(id,n){const r=state.rallies.find(x=>x.id===id);if(r){r.adjust+=n;save()}}
+function cancelRally(id){state.rallies=state.rallies.filter(x=>x.id!==id);save()}
+$("clearDone").addEventListener("click",()=>{state.rallies=state.rallies.filter(r=>!r.done);save()});
+function render(){
+ const now=Date.now();
+ state.rallies=state.rallies.filter(r=>{
+   const impact=r.start+300000+r.march*1000+r.adjust*1000;
+   return now < impact+1000;
+ });
+ state.rallies.forEach(r=>{const impact=r.start+300000+r.march*1000+r.adjust*1000;if(now>=impact)r.done=true});
+ state.rallies.sort((a,b)=>(a.start+300000+a.march*1000+a.adjust*1000)-(b.start+300000+b.march*1000+b.adjust*1000));
+ save();
+ $("count").textContent=state.rallies.length+"件";
+ const active=state.rallies.filter(r=>!r.done);
+ const last=active[active.length-1];
+ $("last").innerHTML=last?`現在の最後尾：${last.country==="jp"?"🇯🇵":"🇺🇸"} ${esc(last.leader)} <strong>${fmt((last.start+300000+last.march*1000+last.adjust*1000-now)/1000)}</strong>`:"現在の最後尾：—";
+ $("rallies").innerHTML=state.rallies.length?state.rallies.map(r=>{
+  const gatherEnd=r.start+300000+r.adjust*1000, impact=gatherEnd+r.march*1000, remain=(impact-now)/1000, gatherRemain=(gatherEnd-now)/1000;
+  const phase=remain<=0?"完了":gatherRemain>0?"集結中":"行軍中";
+  return `<div class="rally ${r.country}">
+  <div class="head"><div class="name">${r.country==="jp"?"🇯🇵":"🇺🇸"} ${esc(r.leader)} <span class="badge">${phase}</span></div><button class="danger" onclick="cancelRally('${r.id}')">取消</button></div>
+  <div class="timer">${remain<=0?"00:00":fmt(remain)}</div>
+  <div class="phase">${phase==="集結中"?"集結終了まで "+fmt(gatherRemain):phase==="行軍中"?"着弾まで "+fmt(remain):"着弾済み"}</div>
+  <div class="impact">着弾予定：${new Date(impact).toLocaleTimeString("ja-JP",{hour:"2-digit",minute:"2-digit",second:"2-digit"})}</div>
+  <div class="row" style="margin-top:8px"><button onclick="adjust('${r.id}',-15)">−15秒</button><button onclick="adjust('${r.id}',-10)">−10秒</button><button onclick="adjust('${r.id}',-5)">−5秒</button><button onclick="adjust('${r.id}',5)">＋5秒</button><button onclick="adjust('${r.id}',10)">＋10秒</button><button onclick="adjust('${r.id}',15)">＋15秒</button></div>
+  </div>`}).join(''):'<div class="empty">進行中のラリーはありません</div>';
+}
+renderPresets();render();setInterval(render,250);
+</script>
+</body>
+</html>
